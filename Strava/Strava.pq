@@ -79,7 +79,7 @@ StravaImpl2 = () as table =>
     let
 
         // Start and End date cannot be null so default them
-         StartDate2 =  #datetime( 1980,1,1,0,0,0) ,
+         StartDate2 =  #datetime( 2024,8,8,0,0,0) ,
          EndDate2 =  #datetime( 3000,1,1,0,0,0) ,
 
         table = StravaData.NavTable(StartDate2,EndDate2)
