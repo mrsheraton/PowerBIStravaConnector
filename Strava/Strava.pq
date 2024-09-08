@@ -32,6 +32,8 @@ No Paging
     Athlete
     Activities (Detailed)
 
+    
+
 
 */
 
@@ -66,6 +68,7 @@ StravaImpl = (StartDate as datetime ,optional EndDate as nullable datetime ) as 
          EndDate2 = if EndDate = null then #datetime( 3000,1,1,0,0,0) else EndDate,
 
         table = StravaData.NavTable(StartDate2,EndDate2)
+
         
     in
         table;
@@ -80,6 +83,8 @@ StravaImpl2 = () as table =>
          EndDate2 =  #datetime( 3000,1,1,0,0,0) ,
 
         table = StravaData.NavTable(StartDate2,EndDate2)
+        
+
         
     in
         table;
@@ -131,6 +136,7 @@ client_secret = Text.FromBinary(Extension.Contents("client_secret"));
 
 redirect_uri = "https://oauth.powerbi.com/views/oauthredirect.html";
 
+
 // strava base URL
 api_uri = "https://www.strava.com/api/v3/";
 activity_uri = "athlete/activities";                           
@@ -170,6 +176,8 @@ Advanced OAuth signatures
 
 
 
+
+
 StartLogin = (clientApplication, dataSourcePath, state, display) => 
     // Advanced OAuth Signature
 
@@ -192,6 +200,8 @@ StartLogin = (clientApplication, dataSourcePath, state, display) =>
                 WindowWidth = windowWidth,
                 Context = null
             ];
+
+
 
 // Advanced OAuth Signature
 FinishLogin = (clientApplication, dataSourcePath, context, callbackUri, state) =>       
@@ -257,23 +267,17 @@ StravaData.NavTable = (optional  StartDate as nullable datetime ,optional EndDat
         TableActivities = StravaData.GetObject(activity_uri,"Activities" ),
         
         TableActivities2 = Table.TransformColumnTypes(TableActivities,{{"start_date_local", type datetime}}),
+        TableActivitiesWithComments = Table.SelectRows(TableActivities2, 
+                each    [comment_count] >= 1 
+                    and [start_date_local] >= StartDate 
+                    and [start_date_local] <= EndDate),
+        TableActivityComments =  getComments(TableActivitiesWithComments) ,
         
-        
-        // Only load if fits in date range:
-            TableActivitiesWithComments = Table.AddColumn(TableActivities2, "Comments", 
-                each if  [comment_count] > 1 
-                        and [start_date_local] >= StartDate 
-                        and [start_date_local] <= EndDate then getActivityComment([id]) else "X"  ),  
-            TableActivityComments =  getActivityComment2(TableActivitiesWithComments) ,
-            
-           
 
-            TableActivitiesWithDetActivities = Table.AddColumn(TableActivities2, "DetailedActivity",
-                each if          
-                         [start_date_local] >= StartDate 
-                        and [start_date_local] <= EndDate 
-                    then getDetailedActivity([id]) else "X"  )     ,         
-            TableDetailedActivity =    getDetailedActivity2(TableActivitiesWithDetActivities) ,
+        TableActivitiesWithDetActivities = Table.SelectRows(TableActivities2,
+                each  [start_date_local] >= StartDate 
+                  and [start_date_local] <= EndDate),
+        TableDetailedActivity =    getDetailedActivity(TableActivitiesWithDetActivities) ,
             
         
         
@@ -324,22 +328,7 @@ StravaData.NavTable = (optional  StartDate as nullable datetime ,optional EndDat
 navTable2;
 
 
-getActivityComment2 = (Activies as table)  =>
- let 
-    Source = Activies,
-    Table1 = Table.SelectRows(Source, each ([Comments] <> "X")),
 
-    #"Filtered Rows2" = Table.SelectRows(Table1, each ([comment_count] <> 0)),
-    Table2 = Table.SelectColumns( #"Filtered Rows2",{"id","Comments"}),
-
-    #"Expanded Comments" =  Table.ExpandTableColumn(Table2, "Comments", {"athlete","activity_id", "text", "created_at", "cursor"}, {"athlete","activity_id", "text", "created_at", "cursor"}),
-    #"Expanded athlete" = Table.ExpandRecordColumn(#"Expanded Comments", "athlete", {"firstname", "lastname"}, {"firstname", "lastname"}),
-    #"Merged Columns" = Table.CombineColumns(#"Expanded athlete",{"firstname", "lastname"},Combiner.CombineTextByDelimiter(" ", QuoteStyle.None),"Commentor Name"),
-    #"Sorted Rows" = Table.Sort(#"Merged Columns",{{"created_at", Order.Ascending}}),
-    #"Changed Type1" = Table.TransformColumnTypes(#"Sorted Rows",{{"created_at", type datetime}}),
-    #"Removed Columns" = Table.RemoveColumns(#"Changed Type1",{"cursor"})
-in
-    #"Removed Columns";
      
 
 
@@ -383,15 +372,13 @@ let
 // the bearer token to the url specified in the function parameter. 
 // For Strava I added an additional parameter to determine the type of content so we can parse this differently later
 StravaData.GetObject = (relativeUrl as text, contentType as text, optional StartDate as number , optional EndDate as number)
-                            => StravaData.PagedReader(api_uri & relativeUrl, contentType, StartDate, EndDate);
-
+                            => StravaData.PagedReader(api_uri & relativeUrl, contentType, StartDate, EndDate);		
 
 // Read all pages of data.
 // After every page, we check the "NextPage" record on the metadata of the previous request.
 // Table.GenerateByPage will keep asking for more pages until we return null.
-
 StravaData.PagedReader = (url as text, contentType as text, optional StartDate as number , optional EndDate as number) =>
-    Table.GenerateByPage((previous) => 
+    let getNextPage =  ((previous as nullable table) =>
         let
         // if previous is null, then this is our first page of data
         nextPage =  if contentType <> "ActivityComments" then        
@@ -413,55 +400,86 @@ StravaData.PagedReader = (url as text, contentType as text, optional StartDate a
                             else null
 
         in
-            page // Returns a page record
-    );
+            page), // Returns a page record
+        Pages = Table.GenerateByPage(getNextPage)  // getNextPage is a function and is being passed as an paraemter into Table.GenerateByPage()
+in
+    Pages; // Returns a page record
+
+
 
 
 // Read a single page of data.
 // If we get back an empty list, it means we are out of pages and should return null.
 StravaData.Page = (url as text, optional page as number, optional contentType as text, optional StartDate as number , optional EndDate as number, optional cursor as text) 
     as nullable table =>
-    let
 
+
+    let        
         queryOptions = if contentType = "Activities" then         
             [
-            page = Number.ToText(page),
-            per_page = Text.From(per_page)
+                page = Number.ToText(page),
+                per_page = Text.From(per_page)
             ]
         else if contentType = "ClubActivities"  then  
             [
-            page = Number.ToText(page),
-            per_page = Text.From(per_page)
+                page = Number.ToText(page),
+                per_page = Text.From(per_page)
             ]                
         else if contentType = "ActivityComments" and cursor <> null then  
             [
-            after_cursor = cursor,
-            page_size = Text.From(per_page)
+                after_cursor = cursor,
+                page_size = Text.From(per_page)
             ]           
-
         else if contentType = "ActivityComments" and cursor = null then  
             [
-            page_size = Text.From(per_page)
+                page_size = Text.From(per_page)
             ]     
-        else   null     
-            ,
-
-     
-
-       content =  if contentType = "Activities" or contentType = "ActivityComments"  or contentType = "ClubActivities"
-        then Web.Contents(url, [ Query = queryOptions ])
-        else  Web.Contents(url),
-           
-        json = Json.Document(content),                                             
+        else   
+            null,
 
 
-        // Responses from the API will either be a single record, or list of records.
-        // When we have a single record, we want to format it as a table. Set NextPage to null.
-        // When we have a list of records, we convert to a table. Set NextPage to page + 1.
-        // When we have an empty list of records, we return null. 
-       
+        //ValueWaitFor(producer as function, interval as function, optional count as number) 
+        // https://learn.microsoft.com/en-us/power-query/wait-retry
+         waitForResult = ValueWaitFor(
+        (iteration) =>                                                        // 1st argument in ValueWaitFor() The Task to be (possibly) retried.
+            let
+                    result = if contentType = "Activities" or contentType = "ActivityComments" or contentType = "ClubActivities" then
+                     
+                     Web.Contents(url, [
+                                      //  Headers=[Authorization="Bearer " & BearerToken]  // Remove line when creating visual studio custom connector
+                                        Query = queryOptions
+                                        , ManualStatusHandling = {429}
+                                        , IsRetry = iteration > 0 
+                                        ])
+                 else
+                     Web.Contents(url, [
+                                       // Headers=[Authorization="Bearer " & BearerToken] // Remove line when creating visual studio custom connector
+                                        ManualStatusHandling = {429}
+                                        , IsRetry = iteration > 0                                         
+                                        ]),
 
-           result =  
+                status = Value.Metadata(result)[Response.Status],
+
+                 actualResult = if status = 429 then null else result               
+            in
+                actualResult,                                                                        // Will return null if a retry is required (429 error) or 
+            
+
+            (iteration) => if iteration = 0 then #duration(0, 0, 0, 0) else #duration(0, 0, 0, Number.Power(2, iteration)) , // 2nd argument in ValueWaitFor()  delay - 
+        10)                                                                                          // 3rd argument in ValueWaitFor() Couunt - Maximum number of retries
+            
+
+    in
+
+         if waitForResult = null then
+         error "Value.WaitFor() Failed after multiple retry attempts"
+     else
+          
+        let 
+
+        json = Json.Document(waitForResult),
+
+             result =  
             // List of records
             if (json is list) then
                 if (List.IsEmpty(json)) then 
@@ -490,79 +508,97 @@ StravaData.Page = (url as text, optional page as number, optional contentType as
             // single record
             else 
                Table.FromRecords({json}) meta [NextPage = null] // turn single record into one item list
-  
-  
-  ,_result =  Diagnostics.LogValue("Debug, result: ", result)
-    in
-      result;
-
-
-
-
-
-
-getActivityComment = (id as number) as table =>
-    let
-        id = Number.ToText(id),
-
-        activity_comment_uri = "activities/" & id &  "/comments",
-        result =  StravaData.GetObject(activity_comment_uri,"ActivityComments") 
-     
-        in
+         
+         in 
             result;
 
 
-getDetailedActivity = (id as number) as table =>
+TableStravaDataActivities = (json) =>
     let
-        id = Number.ToText(id),
+   
+    ConvertToTable = Table.FromList(json, Splitter.SplitByNothing(), null, null, ExtraValues.Error),     
+      TableActivities = Table.FromRecords(ConvertToTable[Column1],null,MissingField.UseNull)
+in
+  TableActivities;
 
-        detailed_comment_uri = "activities/" & id,
-        result =  StravaData.GetObject(detailed_comment_uri,"DetailedActivity") 
 
+
+
+
+
+getComments = (TableIds as table) as table =>
+let
+    // Step 1: Add the "Comments" column by fetching comments for each activity ID
+    ResultTable = Table.AddColumn(TableIds, "Comments", each 
+        let
+            id = Number.ToText([id]),
+            activity_comment_uri = "activities/" & id & "/comments",
+            result = StravaData.GetObject(activity_comment_uri, "ActivityComments")
         in
-            result;
+            result
+    ),
+    
+    // Step 2: Select and expand the relevant columns from the "Comments" data
+    Table2 = Table.SelectColumns(ResultTable, {"id", "Comments"}),
+    ExpandedComments = Table.ExpandTableColumn(Table2, "Comments", {"athlete", "activity_id", "text", "created_at", "cursor"}, {"athlete", "activity_id", "text", "created_at", "cursor"}),
+    
+    // Step 3: Expand the "athlete" record and combine first and last names
+    ExpandedAthlete = Table.ExpandRecordColumn(ExpandedComments, "athlete", {"firstname", "lastname"}, {"firstname", "lastname"}),
+    MergedColumns = Table.CombineColumns(ExpandedAthlete, {"firstname", "lastname"}, Combiner.CombineTextByDelimiter(" ", QuoteStyle.None), "Commentor Name"),
+    
+    // Step 4: Sort by "created_at" and change the type of the "created_at" column
+    SortedRows = Table.Sort(MergedColumns, {{"created_at", Order.Ascending}}),
+    ChangedType = Table.TransformColumnTypes(SortedRows, {{"created_at", type datetime}}),
+    
+    // Step 5: Remove unnecessary columns
+    FinalTable = Table.RemoveColumns(ChangedType, {"cursor"})
+in
+    FinalTable;
 
-getDetailedActivity2 = (Activies as table)  =>
- let 
-    Source = Activies,
-    Table1 = Table.SelectRows(Source, each ([DetailedActivity] <> "X")),
-     Table2 = Table.SelectColumns(Table1,{"DetailedActivity"}),
-    ColNames = Table.ColumnNames(Table.Combine(Table2[DetailedActivity])),
-    ExpandedTable = Table.ExpandTableColumn ( Table2, "DetailedActivity", ColNames )
- in
-     ExpandedTable;
+
+
+
+
+
+
+
+getDetailedActivity = (TableIds as table) as table =>
+let
+    // Step 1: Add the "DetailedActivity" column by fetching detailed activity data for each activity ID
+    ResultTable = Table.AddColumn(TableIds, "DetailedActivity", each 
+        let
+            id = Number.ToText([id]),
+            detailed_activity_uri = "activities/" & id,
+            result = StravaData.GetObject(detailed_activity_uri, "DetailedActivity")
+        in
+            result
+    ),
+    
+    // Step 3: Select the "DetailedActivity" column and expand it
+    TableWithSelectedColumns = Table.SelectColumns(ResultTable, {"DetailedActivity"}),
+    ColNames = Table.ColumnNames(Table.Combine(TableWithSelectedColumns[DetailedActivity])),
+    ExpandedTable = Table.ExpandTableColumn(TableWithSelectedColumns, "DetailedActivity", ColNames)
+in
+    ExpandedTable;
+
 
 
 
 getClubActivitires = (id as number) as table =>
     let
-        
-    
         id = Number.ToText(id),
-
-
         club_activity_uri = "clubs/" & id &  "/activities",
-
         result = StravaData.GetObject(club_activity_uri,"ClubActivities") 
-        
-
         in
             result;
-
  vclubTable = StravaData.GetObject(clubs_uri,"Clubs");
 
  
-
-
-
-
 //Functions to parse Strava data
 //Parse the Detailed Activity by json
  StravaData.DetailedActivity = (json) =>
     let
         ConvertToTable = Table.FromList(json, Splitter.SplitByNothing(), null, null, ExtraValues.Error)
-        
-
 in
    ConvertToTable;
 
@@ -635,6 +671,7 @@ AddNavTableFunctions = (functions as list) as table =>
 
 
 
+
 // 
 // Load common library functions
 // 
@@ -646,6 +683,8 @@ Extension.LoadFunction = (name as text) =>
     in
         Expression.Evaluate(asText, #shared);
 
+
+ValueWaitFor = Extension.LoadFunction("ValueWaitFor.pqm");
 Table.ChangeType = Extension.LoadFunction("Table.ChangeType.pqm");
 Table.GenerateByPage = Extension.LoadFunction("Table.GenerateByPage.pqm");
 Table.ToNavigationTable = Extension.LoadFunction("Table.ToNavigationTable.pqm");
@@ -656,4 +695,5 @@ Table.StravaData.Activities = Extension.LoadFunction("Table.Strava.Activities.pq
 Diagnostics = Extension.LoadFunction("Diagnostics.pqm");
 Diagnostics.LogValue = Diagnostics[LogValue];  // Do not use Diagnostics.LogValue() in any of the auth function or will produce an error
 Diagnostics.LogFailure = Diagnostics[LogFailure];
+
 

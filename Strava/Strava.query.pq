@@ -2,30 +2,27 @@
 let
 
 
-     startdate   = #datetime(2023,3,5,0,0,0),   // Activity Start Date 
+     startdate   = #datetime(2024,08,01,0,0,0),   // Activity Start Date 
      enddate     = null ,   // Activity End Date 
 
-
         
-    result = Strava.Contents(startdate,enddate),
-
-    
-    result2 = result{[Name="Activities Comments"]}[Data],
-    result3 = result{[Name="Activities (Summary)"]}[Data],
-    
-    result4 = result{[Name="Activities (Detailed)"]}[Data],    // This has one table with two cola id and DetailedActivity [Tables]
-    ColNames = Table.ColumnNames(Table.Combine(result4[DetailedActivity])),
-    result6 = Table.ExpandTableColumn ( result4, "DetailedActivity", ColNames )
-    
-    
-      
-    
-    
-    //TableActivities = Table.FromRecords(result3[Column1])  // This has 
-    //ColNames = Table.ColumnNames(TableActivities)
-    
+    Source = Strava.Contents(startdate,enddate),
+    Activities_Summary = Source{[Name="Activities (Summary)"]}[Data],
+    Activities_Comments = Source{[Name="Activities (Comments)"]}[Data],
+    Activities_Detailed = Source{[Name="Activities (Detailed)"]}[Data],
+    Clubs = Source{[Name="Clubs"]}[Data]
+    /*
+    Activities (Summary)
+    Activities (Comments)
+    Activities (Detailed)
+    Activities (Detailed) (Laps)
+    Activities (Detailed) (Segment Efforts)
+    Activities (Detailed) (Best Efforts)
+    Clubs
+    Athlete
+    */
 
 in   
-    result
+    Clubs
 
 
