@@ -440,7 +440,7 @@ StravaData.Page = (url as text, optional page as number, optional contentType as
 
         //ValueWaitFor(producer as function, interval as function, optional count as number) 
         // https://learn.microsoft.com/en-us/power-query/wait-retry
-         waitForResult = ValueWaitFor(
+         content = ValueWaitFor(
         (iteration) =>                                                        // 1st argument in ValueWaitFor() The Task to be (possibly) retried.
             let
                     result = if contentType = "Activities" or contentType = "ActivityComments" or contentType = "ClubActivities" then
@@ -471,13 +471,13 @@ StravaData.Page = (url as text, optional page as number, optional contentType as
 
     in
 
-         if waitForResult = null then
+         if content = null then
          error "Value.WaitFor() Failed after multiple retry attempts"
      else
           
         let 
 
-        json = Json.Document(waitForResult),
+        json = Json.Document(content),
 
              result =  
             // List of records
